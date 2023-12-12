@@ -3,106 +3,119 @@ package se.parkster.eslab
 import java.time.ZonedDateTime
 import java.util.UUID
 
-class RPSService {
-    fun initiateGame(
-        events: List<RPSEvent>,
-        playerId1: String,
-        playerId2: String
-    ): List<RPSEvent> {
-        if (events.isNotEmpty()) {
-            throw IllegalStateException("Game already initiated")
+import org.occurrent.dsl.decider.decider
+
+val rps = decider(
+    initialState = GameStateUnInitiated(),
+    decide = ::decide,
+    evolve = ::evolve,
+)
+
+sealed interface GameCommand
+
+data class InitiateGame(
+    val playerId1: String,
+    val playerId2: String
+): GameCommand
+
+data class ShowHandGesture(
+    val playerId: String,
+    val gesture: HandGesture
+): GameCommand
+
+fun decide(command: GameCommand, state: GameState): List<RPSEvent> =
+    when (command) {
+        is InitiateGame ->  {
+            if (state !is GameStateUnInitiated) {
+                throw IllegalStateException("Game already initiated")
+            }
+
+            listOf(GameInitiated(
+                eventId = UUID.randomUUID().toString(),
+                gameId = UUID.randomUUID().toString(),
+                dateTime = ZonedDateTime.now(),
+                playerId1 = command.playerId1,
+                playerId2 = command.playerId2
+            ))
         }
+        is ShowHandGesture -> {
+            when (state) {
+                is GameStateStarted -> {
+                    val gameResult: RPSEvent
 
-        return listOf(GameInitiated(
-            eventId = UUID.randomUUID().toString(),
-            gameId = UUID.randomUUID().toString(),
-            dateTime = ZonedDateTime.now(),
-            playerId1 = playerId1,
-            playerId2 = playerId2
-        ))
-    }
+                    val player1Move = if(state.player1Id == command.playerId) command.gesture else state.playerMove
+                    val player2Move = if(state.player2Id == command.playerId) command.gesture else state.playerMove
 
-    fun showHandGesture(
-        events: List<RPSEvent>,
-        playerId: String,
-        gesture: HandGesture
-    ): List<RPSEvent> {
-        return when (val gameState = events.evolve()) {
-            is GameStateStarted -> {
-                val gameResult: RPSEvent
-
-                val player1Move = if(gameState.player1Id == playerId) gesture else gameState.playerMove
-                val player2Move = if(gameState.player2Id == playerId) gesture else gameState.playerMove
-
-                gameResult = if (gameState.playerMove == gesture) {
-                    GameDrawn(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId
-                    )
-                } else {
-                    val winnerId = if (player1Move == HandGesture.ROCK && player2Move == HandGesture.SCISSORS ||
-                        player1Move == HandGesture.PAPER && player2Move == HandGesture.ROCK ||
-                        player1Move == HandGesture.SCISSORS && player2Move == HandGesture.PAPER
-                    ) {
-                        gameState.player1Id
+                    gameResult = if (state.playerMove == command.gesture) {
+                        GameDrawn(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId
+                        )
                     } else {
-                        gameState.player2Id
+                        val winnerId = if (player1Move == HandGesture.ROCK && player2Move == HandGesture.SCISSORS ||
+                            player1Move == HandGesture.PAPER && player2Move == HandGesture.ROCK ||
+                            player1Move == HandGesture.SCISSORS && player2Move == HandGesture.PAPER
+                        ) {
+                            state.player1Id
+                        } else {
+                            state.player2Id
+                        }
+
+                        GameWon(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId,
+                            winnerId = winnerId,
+                            loserId = if (winnerId == state.player1Id) state.player2Id else state.player1Id
+                        )
                     }
 
-                    GameWon(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId,
-                        winnerId = winnerId,
-                        loserId = if (winnerId == gameState.player1Id) gameState.player2Id else gameState.player1Id
+
+                    listOf(
+                        HandShown(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId,
+                            playerId = command.playerId,
+                            gesture = command.gesture
+                        ),
+
+                        GameEnded(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId
+                        ),
+
+                        gameResult
                     )
                 }
 
-
-                listOf(
-                    HandShown(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId,
-                        playerId = playerId,
-                        gesture = gesture
-                    ),
-
-                    GameEnded(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId
-                    ),
-
-                    gameResult
-                )
-            }
-
-            is GameStateInitiated -> {
-                listOf(
-                    HandShown(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId,
-                        playerId = playerId,
-                        gesture = gesture
-                    ),
-                    GameStarted(
-                        eventId = UUID.randomUUID().toString(),
-                        dateTime = ZonedDateTime.now(),
-                        gameId = gameState.gameId
+                is GameStateInitiated -> {
+                    listOf(
+                        HandShown(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId,
+                            playerId = command.playerId,
+                            gesture = command.gesture
+                        ),
+                        GameStarted(
+                            eventId = UUID.randomUUID().toString(),
+                            dateTime = ZonedDateTime.now(),
+                            gameId = state.gameId
+                        )
                     )
-                )
-            }
+                }
 
-            else -> {
-                throw IllegalStateException("Can't show hand gesture when in state $gameState")
+                else -> {
+                    throw IllegalStateException("Can't show hand gesture when in state $state")
+                }
             }
         }
     }
 
-}
+
 
 
 private fun evolve(gameState: GameState, event: RPSEvent): GameState =
